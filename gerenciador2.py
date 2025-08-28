@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime
+import seaborn as sns
+from datetime import date, datetime
 from io import BytesIO
 
 # ================================
@@ -12,121 +13,230 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+plt.style.use("dark_background")
 
-# Estilo do gráfico
-plt.style.use("seaborn-v0_8-darkgrid")
-
-# Locais de produção
-estufas = [f"Estufa {i}" for i in range(1, 7)]
-campos = [f"Campo {i}" for i in range(1, 14)]
-locais = estufas + campos
-
-# Produtos disponíveis
-produtos = [
-    "Tomate",
-    "Abóbora Itália",
-    "Abóbora Menina",
-    "Pepino Japonês",
-    "Pepino Caipira"
-]
-
-# Arquivo de dados
+# Nome do arquivo de dados local
 ARQUIVO_DADOS = "colheitas.xlsx"
 
 # ================================
-# CARREGAR OU CRIAR DADOS
+# FUNÇÕES AUXILIARES
 # ================================
 def carregar_dados():
     try:
-        df = pd.read_excel(ARQUIVO_DADOS)
-        if "Data" in df.columns:
-            df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-        return df
-    except FileNotFoundError:
-        return pd.DataFrame(columns=["Data", "Local", "Produto", "Caixas"])
+        return pd.read_excel(ARQUIVO_DADOS)
+    except:
+        return pd.DataFrame(columns=["Data","Local","Produto","Caixas","Caixas de Segunda","Temperatura","Umidade","Chuva"])
 
-df = carregar_dados()
-
-# ================================
-# INTERFACE
-# ================================
-st.title("🌱 Gerenciador de Produção")
-st.markdown("### Cadastro de Produção por Local")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    local = st.selectbox("📍 Escolha o Local", locais)
-
-with col2:
-    produto = st.selectbox("🥒 Produto", produtos)
-
-with col3:
-    caixas = st.number_input("📦 Caixas Colhidas", min_value=0, step=1)
-
-if st.button("➕ Adicionar Produção"):
-    novo_registro = pd.DataFrame([{
-        "Data": datetime.now(),
-        "Local": local,
-        "Produto": produto,
-        "Caixas": caixas
-    }])
-    df = pd.concat([df, novo_registro], ignore_index=True)
+def salvar_dados(df):
     df.to_excel(ARQUIVO_DADOS, index=False)
-    st.success("✅ Produção registrada com sucesso!")
+
+def normalizar_colunas(df):
+    df = df.copy()
+    col_map = {
+        "Estufa":"Local",
+        "Área":"Local",
+        "Produção":"Caixas",
+        "Primeira":"Caixas",
+        "Segunda":"Caixas de Segunda",
+        "Qtd":"Caixas",
+        "Quantidade":"Caixas",
+    }
+    df.rename(columns={c:col_map.get(c,c) for c in df.columns}, inplace=True)
+
+    if "Data" in df.columns:
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+
+    for col in ["Caixas","Caixas de Segunda","Temperatura","Umidade","Chuva"]:
+        if col not in df.columns:
+            df[col] = 0
+
+    if "Local" not in df.columns: df["Local"] = ""
+    if "Produto" not in df.columns: df["Produto"] = ""
+
+    return df
+
+def plot_bar(ax, x, y, df, cores, titulo, ylabel):
+    df.groupby(x)[y].sum().plot(kind="bar", ax=ax, color=cores, width=0.6)
+    ax.set_title(titulo, fontsize=14)
+    ax.set_ylabel(ylabel)
+    ax.grid(axis="y", linestyle="--", alpha=0.7)
+    for p in ax.patches:
+        ax.text(p.get_x() + p.get_width()/2, p.get_height() + 0.01*df[y].max(), 
+                f"{int(p.get_height())}", ha="center")
 
 # ================================
-# VISUALIZAÇÃO
+# MENU PRINCIPAL
 # ================================
-st.markdown("---")
-st.subheader("📊 Distribuição da Produção por Local")
+st.sidebar.title("📌 Menu")
+pagina = st.sidebar.radio("Escolha a página:", ["Cadastro de Produção","Análises Avançadas"])
 
-if not df.empty:
-    resumo = df.groupby("Local")["Caixas"].sum()
+# ================================
+# PÁGINA CADASTRO
+# ================================
+if pagina == "Cadastro de Produção":
+    st.title("📝 Cadastro de Produção")
+    df = carregar_dados()
 
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.pie(resumo, labels=resumo.index, autopct="%1.1f%%", startangle=90)
-    ax.set_title("Proporção da Produção por Local")
+    with st.form("form_cadastro", clear_on_submit=True):
+        col1,col2,col3 = st.columns(3)
+        with col1:
+            data = st.date_input("Data", value=date.today())
+            local = st.text_input("Local/Estufa")
+        with col2:
+            produto = st.text_input("Produto")
+            caixas = st.number_input("Caixas (1ª)", min_value=0, step=1)
+        with col3:
+            caixas2 = st.number_input("Caixas (2ª)", min_value=0, step=1)
+            temperatura = st.number_input("Temperatura (°C)", min_value=0.0, step=0.1)
+            umidade = st.number_input("Umidade (%)", min_value=0.0, step=0.1)
 
+        chuva = st.number_input("Chuva (mm)", min_value=0.0, step=0.1)
+
+        enviado = st.form_submit_button("Salvar Registro ✅")
+
+        if enviado:
+            novo = pd.DataFrame([{
+                "Data": pd.to_datetime(data),
+                "Local": local,
+                "Produto": produto,
+                "Caixas": caixas,
+                "Caixas de Segunda": caixas2,
+                "Temperatura": temperatura,
+                "Umidade": umidade,
+                "Chuva": chuva
+            }])
+            df = pd.concat([df, novo], ignore_index=True)
+            salvar_dados(df)
+            st.success("Registro salvo com sucesso!")
+
+    if not df.empty:
+        st.markdown("### 📋 Registros já cadastrados")
+        st.dataframe(df.tail(10), use_container_width=True)
+
+# ================================
+# PÁGINA ANÁLISES
+# ================================
+if pagina == "Análises Avançadas":
+    st.title("📊 Análises Avançadas")
+    st.markdown("Escolha a fonte de dados:")
+    fonte = st.radio("Fonte de dados:", ["Usar dados cadastrados no app","Enviar um arquivo Excel"], horizontal=True)
+
+    df_raw = None
+    if fonte == "Usar dados cadastrados no app":
+        df_raw = carregar_dados()
+    else:
+        arquivo = st.file_uploader("Selecione um arquivo Excel", type=["xlsx","xls"])
+        if arquivo:
+            df_raw = pd.read_excel(arquivo)
+
+    if df_raw is None or df_raw.empty:
+        st.warning("Nenhum dado disponível.")
+        st.stop()
+
+    df_norm = normalizar_colunas(df_raw)
+
+    # FILTROS
+    st.sidebar.markdown("## 🔎 Filtros")
+    min_date = df_norm["Data"].min().date() if not df_norm["Data"].isna().all() else date.today()
+    max_date = df_norm["Data"].max().date() if not df_norm["Data"].isna().all() else date.today()
+    date_range = st.sidebar.date_input("Período", value=(min_date,max_date), min_value=min_date, max_value=max_date)
+
+    locais_all = sorted(df_norm["Local"].dropna().unique())
+    locais_sel = st.sidebar.multiselect("Local (todos se vazio)", locais_all, default=locais_all)
+
+    produtos_all = sorted(df_norm["Produto"].dropna().unique())
+    produtos_sel = st.sidebar.multiselect("Produto (todos se vazio)", produtos_all, default=produtos_all)
+
+    df_filt = df_norm.copy()
+    try:
+        start_date, end_date = date_range
+    except:
+        start_date = end_date = date_range
+    df_filt = df_filt[(df_filt["Data"] >= pd.to_datetime(start_date)) & (df_filt["Data"] <= pd.to_datetime(end_date))]
+
+    if locais_sel:
+        df_filt = df_filt[df_filt["Local"].isin(locais_sel)]
+    if produtos_sel:
+        df_filt = df_filt[df_filt["Produto"].isin(produtos_sel)]
+
+    if df_filt.empty:
+        st.warning("Nenhum dado após aplicar os filtros.")
+        st.stop()
+
+    df_filt["Total"] = df_filt["Caixas"] + df_filt["Caixas de Segunda"]
+
+    # KPIs
+    total = df_filt["Total"].sum()
+    media = df_filt["Total"].mean()
+    maior = df_filt["Total"].max()
+    menor = df_filt["Total"].min()
+    cresc = "—"
+    if not df_filt["Data"].isna().all():
+        tmp = df_filt.copy()
+        tmp["ano_semana"] = tmp["Data"].dt.to_period("W")
+        semanal = tmp.groupby("ano_semana")["Total"].sum().sort_index()
+        if len(semanal)>=2:
+            atual, anterior = semanal.iloc[-1], semanal.iloc[-2]
+            cresc = f"{(atual-anterior)/anterior*100:+.1f}%" if anterior !=0 else "N/A"
+
+    k1,k2,k3,k4,k5 = st.columns(5)
+    k1.metric("Total de Caixas", f"{total:,.0f}")
+    k2.metric("Média por Registro", f"{media:,.2f}")
+    k3.metric("Máximo em 1 Registro", f"{maior:,.0f}")
+    k4.metric("Mínimo em 1 Registro", f"{menor:,.0f}")
+    k5.metric("Crescimento vs semana anterior", cresc)
+
+    st.markdown("---")
+
+    # GRÁFICOS
+    st.subheader("🏭 Total por Local")
+    fig, ax = plt.subplots(figsize=(12,6))
+    plot_bar(ax,"Local","Total",df_filt,cores=sns.color_palette("tab20", n_colors=len(df_filt["Local"].unique())),
+             titulo="Total de Caixas por Local", ylabel="Total de Caixas")
     st.pyplot(fig)
 
-    st.markdown("### 📋 Dados Registrados")
+    st.subheader("🍅 Total por Produto")
+    fig, ax = plt.subplots(figsize=(10,5))
+    plot_bar(ax,"Produto","Total",df_filt,cores=sns.color_palette("Set2", n_colors=len(df_filt["Produto"].unique())),
+             titulo="Total de Caixas por Produto", ylabel="Total de Caixas")
+    st.pyplot(fig)
 
-    # Resetar index para poder mostrar e selecionar
-    df_reset = df.reset_index(drop=True)
+    # Comparativo 1ª vs 2ª
+    st.subheader("📊 Comparativo Caixas 1ª vs 2ª")
+    for tipo in ["Local","Produto"]:
+        if tipo in df_filt.columns:
+            df_comp = df_filt.groupby(tipo)[["Caixas","Caixas de Segunda"]].sum().reset_index()
+            fig, ax = plt.subplots(figsize=(12,6))
+            df_comp.plot(kind="bar", x=tipo, ax=ax, width=0.7)
+            ax.set_ylabel("Quantidade de Caixas")
+            ax.set_title(f"Caixas de Primeira vs Segunda por {tipo}")
+            ax.grid(axis="y")
+            ax.legend(["Caixas (1ª)","Caixas de Segunda"])
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+            for p in ax.patches:
+                ax.text(p.get_x()+p.get_width()/2,p.get_height()+max(df_filt["Total"])*0.01,f'{int(p.get_height())}',ha='center')
+            st.pyplot(fig)
 
-    # Mostrar tabela com índice
-    st.dataframe(df_reset)
+    # Insights
+    st.markdown("---")
+    st.markdown("### 🧠 Insights")
+    total_segunda = df_filt["Caixas de Segunda"].sum()
+    pct_segunda = total_segunda/total*100 if total>0 else 0
+    st.markdown(f"- Taxa de Segunda Linha: {pct_segunda:.1f}% do total ({int(total_segunda):,} caixas de 2ª)")
 
-    # Seleção de registro para excluir
-    idx_excluir = st.number_input(
-        "Digite o número da linha que deseja excluir:",
-        min_value=0,
-        max_value=len(df_reset) - 1,
-        step=1
-    )
+    media_prod = df_filt.groupby("Produto")["Total"].mean().sort_values(ascending=False)
+    if not media_prod.empty:
+        st.markdown(f"- Produto com maior média por registro: {media_prod.index[0]} ({media_prod.iloc[0]:.1f} caixas/registro)")
 
-    if st.button("🗑️ Excluir registro selecionado"):
-        df = df.drop(df_reset.index[idx_excluir]).reset_index(drop=True)
-        df.to_excel(ARQUIVO_DADOS, index=False)
-        st.success(f"✅ Registro da linha {idx_excluir} excluído com sucesso!")
-        st.rerun()
-  # recarrega a página para atualizar
+    top_local_val = df_filt.groupby("Local")["Total"].sum().sort_values(ascending=False)
+    if not top_local_val.empty:
+        st.markdown(f"- Top local: {top_local_val.index[0]} ({int(top_local_val.iloc[0]):,} caixas)")
 
-    # ================================
-    # BOTÃO DE DOWNLOAD
-    # ================================
-    from io import BytesIO
+    # Download filtrado
+    st.markdown("---")
     buffer = BytesIO()
-    df.to_excel(buffer, index=False, engine="openpyxl")
+    df_filt.to_excel(buffer, index=False, engine="openpyxl")
     buffer.seek(0)
-
-    st.download_button(
-        label="📥 Baixar dados em Excel",
-        data=buffer,
-        file_name="colheitas.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-else:
-    st.info("Nenhum dado registrado ainda. Adicione sua primeira produção acima 👆")
+    st.download_button("📥 Baixar dados filtrados em Excel", data=buffer,
+                       file_name="colheitas_filtradas.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
